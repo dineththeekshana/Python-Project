@@ -103,10 +103,16 @@ def register():
 def login():
     data = request.get_json()
 
+    if not data:
+        return error_response("No data provided")
+
     if "email" in data and "password" in data:
         user = User.query.filter_by(email=data["email"]).first()
     elif "username" in data and "password" in data:
         user = User.query.filter_by(username=data["username"]).first()
+    elif "user" in data and "password" in data:  # Add support for "user" key instead of "username" or "email"
+        # Try to find by username first, then by email
+        user = User.query.filter_by(username=data["user"]).first() or User.query.filter_by(email=data["user"]).first()
     else:
         return error_response("Email/username and password are required")
 
