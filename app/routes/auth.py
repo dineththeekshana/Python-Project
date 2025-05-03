@@ -106,17 +106,26 @@ def login():
     if not data:
         return error_response("No data provided")
 
-    if "email" in data and "password" in data:
-        user = User.query.filter_by(email=data["email"]).first()
-    elif "username" in data and "password" in data:
-        user = User.query.filter_by(username=data["username"]).first()
-    elif "user" in data and "password" in data:  # Add support for "user" key instead of "username" or "email"
-        # Try to find by username first, then by email
-        user = User.query.filter_by(username=data["user"]).first() or User.query.filter_by(email=data["user"]).first()
+    # Clean input data
+    if "password" in data:
+        password = data["password"]
+    else:
+        return error_response("Password is required")
+
+    # Case-insensitive search for username/email
+    if "email" in data:
+        user = User.query.filter(User.email.ilike(data["email"].strip())).first()
+    elif "username" in data:
+        user = User.query.filter(User.username.ilike(data["username"].strip())).first()
+    elif "user" in data:
+        # Try to find by username first, then by email - using case-insensitive search
+        user_input = data["user"].strip()
+        user = (User.query.filter(User.username.ilike(user_input)).first() or 
+                User.query.filter(User.email.ilike(user_input)).first())
     else:
         return error_response("Email/username and password are required")
 
-    if not user or not user.check_password(data["password"]):
+    if not user or not user.check_password(password):
         return error_response("Invalid credentials", 401)
 
     additional_claims = {"role": user.role}
