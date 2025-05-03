@@ -7,6 +7,14 @@ from app.utils.validators import validate_amount, error_response
 
 bp = Blueprint('transactions', __name__, url_prefix='/api/transactions')
 
+def handle_db_commit():
+    """Helper function to handle database commits with error handling."""
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f"Database error: {str(e)}", 500)
+
 @bp.route('', methods=['GET'])
 @jwt_required()
 def get_transactions():
@@ -43,10 +51,12 @@ def deposit():
         return error_response('Account ID and amount are required')
     
     # Validate amount
-    if not validate_amount(data['amount']):
-        return error_response('Amount must be a positive number')
-    
-    amount = float(data['amount'])
+    try:
+        amount = float(data['amount'])
+        if amount <= 0:
+            return error_response('Amount must be a positive number')
+    except (ValueError, TypeError):
+        return error_response('Amount must be a valid number')
     
     # Get the account
     account = Account.query.filter_by(id=data['account_id'], user_id=user_id).first()
@@ -66,7 +76,9 @@ def deposit():
     )
     
     db.session.add(transaction)
-    db.session.commit()
+    commit_error = handle_db_commit()
+    if commit_error:
+        return commit_error
     
     return jsonify({
         'message': 'Deposit successful',
@@ -86,10 +98,12 @@ def withdraw():
         return error_response('Account ID and amount are required')
     
     # Validate amount
-    if not validate_amount(data['amount']):
-        return error_response('Amount must be a positive number')
-    
-    amount = float(data['amount'])
+    try:
+        amount = float(data['amount'])
+        if amount <= 0:
+            return error_response('Amount must be a positive number')
+    except (ValueError, TypeError):
+        return error_response('Amount must be a valid number')
     
     # Get the account
     account = Account.query.filter_by(id=data['account_id'], user_id=user_id).first()
@@ -113,7 +127,9 @@ def withdraw():
     )
     
     db.session.add(transaction)
-    db.session.commit()
+    commit_error = handle_db_commit()
+    if commit_error:
+        return commit_error
     
     return jsonify({
         'message': 'Withdrawal successful',
@@ -133,10 +149,12 @@ def transfer():
         return error_response('From account ID, to account ID, and amount are required')
     
     # Validate amount
-    if not validate_amount(data['amount']):
-        return error_response('Amount must be a positive number')
-    
-    amount = float(data['amount'])
+    try:
+        amount = float(data['amount'])
+        if amount <= 0:
+            return error_response('Amount must be a positive number')
+    except (ValueError, TypeError):
+        return error_response('Amount must be a valid number')
     
     # Check if accounts are different
     if data['from_account_id'] == data['to_account_id']:
@@ -172,7 +190,9 @@ def transfer():
     )
     
     db.session.add(transaction)
-    db.session.commit()
+    commit_error = handle_db_commit()
+    if commit_error:
+        return commit_error
     
     return jsonify({
         'message': 'Transfer successful',
@@ -346,4 +366,4 @@ def account_transactions(account_id):
         'transaction': transaction.to_dict(),
         'new_balance': account.balance,
         'id': transaction.id  # Include id for tests
-    }), 201 
+    }), 201

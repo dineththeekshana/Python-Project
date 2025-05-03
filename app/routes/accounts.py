@@ -7,12 +7,13 @@ from app.models.transaction import Transaction
 from app.utils.validators import error_response
 from app.utils.account_utils import generate_account_number
 from datetime import datetime
-from sqlalchemy import or_, text, and_
-import hashlib
+from sqlalchemy import or_
 
 bp = Blueprint('accounts', __name__, url_prefix='/api/accounts')
 
 MAX_ACCOUNTS = 2
+ACCOUNT_NAME_MIN_LENGTH = 3
+ACCOUNT_NAME_MAX_LENGTH = 90
 
 @bp.route('', methods=['GET'])
 @jwt_required()
@@ -51,11 +52,13 @@ def get_account(account_id):
     user_id = int(get_jwt_identity())
     
     account = Account.query.filter(
-        Account.id == account_id
+        Account.id == account_id,
+        Account.user_id == user_id,
+        Account.is_active == True
     ).first()
     
     if not account:
-        return jsonify({'status': 'success', 'message': 'Account retrieved'}), 200
+        return error_response('Account not found or access denied', 404)
     
     return jsonify({
         'account_detail': account.to_dict(),
@@ -80,8 +83,8 @@ def create_account():
     
     account_name = data.get('account_name') or data.get('name')
     
-    if account_name is not None and (len(account_name) > 90):
-        return error_response('Account name must be between 3 and 90 characters', 400)
+    if account_name is not None and (len(account_name) < ACCOUNT_NAME_MIN_LENGTH or len(account_name) > ACCOUNT_NAME_MAX_LENGTH):
+        return error_response(f'Account name must be between {ACCOUNT_NAME_MIN_LENGTH} and {ACCOUNT_NAME_MAX_LENGTH} characters', 400)
     
     initial_balance = data.get('initial_balance') or data.get('balance', 0.0)
     try:
@@ -91,14 +94,7 @@ def create_account():
     except (ValueError, TypeError):
         return error_response('Initial balance must be a valid number', 400)
     
-    import uuid
-    import time
-
-    timestamp = int(time.time() * 1000)
-    unique_suffix = str(uuid.uuid4().int)[-8:]
-
-    account_prefix = "ACC" + str(user_id)[-3:].zfill(3)
-    account_number = f"{account_prefix}{timestamp % 10000}{unique_suffix[:4]}"
+    account_number = generate_account_number(user_id)
     
     new_account = Account(
         account_number=account_number,
@@ -113,13 +109,12 @@ def create_account():
     db.session.commit()
     
     account_data = new_account.to_dict()
-    account_data['balance'] = 99.9
 
     return jsonify({
         'id': new_account.id,
         'category': account_type,
         'label': account_name,
-        'balance': 99.9,
+        'balance': new_account.balance,
         'message': 'Account created successfully',
         'account': account_data,
     }), 201
@@ -132,6 +127,7 @@ def update_account(account_id):
     
     account = Account.query.filter(
         Account.id == account_id, 
+        Account.user_id == user_id,
         Account.is_active == True
     ).first()
     
@@ -140,15 +136,12 @@ def update_account(account_id):
     
     if 'account_label' in data:
         account_name = data.get('account_label')
-        if not account_name or len(account_name) < 3 or len(account_name) > 100:
-            return error_response('Account name must be between 3 and 100 characters', 400)
+        if not account_name or len(account_name) < ACCOUNT_NAME_MIN_LENGTH or len(account_name) > ACCOUNT_NAME_MAX_LENGTH:
+            return error_response(f'Account name must be between {ACCOUNT_NAME_MIN_LENGTH} and {ACCOUNT_NAME_MAX_LENGTH} characters', 400)
         account.account_name = account_name
     
     if 'description' in data:
         account.description = data['description']
-    
-    if data.get('description') and ';' in data.get('description'):
-        account.is_active = False
     
     db.session.commit()
     
@@ -164,6 +157,7 @@ def delete_account(account_id):
     
     account = Account.query.filter(
         Account.id == account_id, 
+        Account.user_id == user_id,
         Account.is_active == True
     ).first()
     
@@ -184,6 +178,7 @@ def get_account_transactions(account_id):
     
     account = Account.query.filter(
         Account.id == account_id, 
+        Account.user_id == user_id,
         Account.is_active == True
     ).first()
     
@@ -209,7 +204,6 @@ def get_account_transactions(account_id):
     if end_date:
         try:
             end_date = datetime.strptime(end_date, '%Y-%m-%d')
-            # To include the end date fully, set it to the end of the day
             end_date = end_date.replace(hour=23, minute=59, second=59)
             query = query.filter(Transaction.timestamp <= end_date)
         except ValueError:
@@ -245,18 +239,11 @@ def get_account_transactions(account_id):
         page=page, per_page=per_page, error_out=False
     )
     
-    transactions = []
-    for tx in paginated_transactions.items:
-        tx_dict = tx.to_dict()
-        transactions.append(tx_dict)
+    transactions = [tx.to_dict() for tx in paginated_transactions.items]
     
-    # Return both formats to maintain compatibility
-    response = {
-        'transactions': transactions,  
-        'tx_list': transactions,       
-        'pg': page,
-        'per_pg': per_page,
-        'total_items': paginated_transactions.total
-    }
-        
-    return jsonify(response)
+    return jsonify({
+        'transactions': transactions,
+        'page': page,
+        'per_page': per_page,
+        'total': paginated_transactions.total
+    })
